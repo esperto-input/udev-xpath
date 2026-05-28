@@ -1,0 +1,14 @@
+[package]
+name = "udev-xpath"
+version = "0.1.0"
+edition = "2024"
+description = "Match udev devices with xpath queries"
+readme = "README.md"
+license = "MIT"
+
+[dependencies]
+xee-xpath = "0.1.5"
+xot = "0.31.2"
+udev = "0.9.3"
+tap = "1.0.1"
+base64 = "0.22.1"

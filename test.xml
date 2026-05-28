@@ -1,0 +1,38 @@
+<bababa>
+
+
+    <device SUBSYSTEM='hid'>
+        <device>
+            <device ID_INPUT='1'>
+                <attr name='capabilities' value='4'>
+                    <attr name='abs' value='7' />
+                    <attr name='trigger' value='6' />
+                    <attr name='rumble' value='8' />
+                </attr>
+                <attr name='sub' value='7'>
+                    <attr name='rumble' value='8' />
+                </attr>
+            </device>
+        </device>
+        <attr name='capabilities'>
+            <attr name='abs' value='8' />
+        </attr>
+        <attr name='sub' value='7'>
+            <attr name='rumble' value='8' />
+        </attr>
+    </device>
+
+    <device SUBSYSTEM='hid'>
+        <device>
+            <device ID_INPUT='1'>
+                <attr name='capabilities/abs' value='8' />
+                <attr name='capabilities/trigger' value='6' />
+                <attr name='capabilities/rumble' value='7' />
+                <attr name='sub/rumble' value='7' />
+            </device>
+        </device>
+        <attr name='capabilities/abs' value='8' />
+        <attr name='sub/rumble' value='6' />
+    </device>
+
+</bababa>
