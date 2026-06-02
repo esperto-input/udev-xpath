@@ -1,24 +1,23 @@
-use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use std::assert_matches;
+use base64::Engine;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::marker::PhantomData;
-use std::mem::transmute;
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
-use tap::{Pipe, Tap};
+use tap::Pipe;
 use udev::Device;
 use xee_xpath::context::StaticContextBuilder;
 pub use xee_xpath::error::Result as XeeResult;
 use xee_xpath::query::{Convert, ManyQuery, OneQuery};
 use xee_xpath::{Documents, Item, Queries, Query};
-use xot::output::Indentation;
 use xot::output::xml::Parameters;
+use xot::output::Indentation;
 use xot::xmlname::{CreateName, CreateNamespace};
 use xot::{Error, NameId, Node};
 
-const KEY_NAMESPACE: (&str, &str) = ("key", "https://mirolang.org");
+const META_NAMESPACE: (&str, &str) = ("_", "https://mirolang.org/meta_ns");
+const KEY_NAMESPACE: (&str, &str) = ("key", "https://mirolang.org/key_ns");
 
 pub trait UdevDevice: Sized {
    fn syspath(&self) -> &str;
@@ -54,11 +53,11 @@ impl UdevDevice for Device {
    }
 
    fn subsystem(&self) -> Option<&str> {
-      self.subsystem().map(OsStr::to_str).map(Option::unwrap)
+      self.subsystem().map(OsStr::to_str).flatten()
    }
 
    fn driver(&self) -> Option<&str> {
-      self.driver().map(OsStr::to_str).map(Option::unwrap)
+      self.driver().map(OsStr::to_str).flatten()
    }
 
    fn attributes(&self) -> impl Iterator<Item = (String, String)> {
@@ -110,13 +109,6 @@ impl UdevDevice for Device {
          }
       })
    }
-}
-
-macro_rules! declr_syspath_ref {
-   ($name:ident, $device:ident) => {
-      let $name = $device.syspath();
-      let $name = $name.as_ref();
-   };
 }
 
 #[cfg(test)]
@@ -171,17 +163,20 @@ impl UdevDevice for DummyDevice {
 }
 
 struct XMLNames {
-   ns: CreateNamespace,
    device: NameId,
    attr: NameId,
    attr_path: NameId,
    name: NameId,
    value: NameId,
+   sysname: NameId,
+   syspath: NameId,
+   subsystem: NameId,
+   driver: NameId,
+   input: NameId,
 }
 
 pub struct UdevTree<D: UdevDevice> {
    docs: Documents,
-   _document_node: Node,
    document_element: Node,
    node_map: HashMap<String, Node>,
    names: XMLNames,
@@ -206,8 +201,14 @@ impl<D: UdevDevice> UdevTree<D> {
       // TODO eventually remove
       assert_eq!(xot.document_element(document_node).unwrap(), document_element);
 
-      let ns = CreateNamespace::new(xot, KEY_NAMESPACE.0, KEY_NAMESPACE.1);
-      xot.append_namespace(document_element, &ns).unwrap();
+      let meta_ns = CreateNamespace::new(xot, META_NAMESPACE.0, META_NAMESPACE.1);
+      xot.append_namespace(document_element, &meta_ns).unwrap();
+
+      let input = CreateName::namespaced(xot, "input", &meta_ns).name_id();
+      // let single_child = CreateName::namespaced(xot, "input", &meta_ns).name_id();
+
+      let key_ns = CreateNamespace::new(xot, KEY_NAMESPACE.0, KEY_NAMESPACE.1);
+      xot.append_namespace(document_element, &key_ns).unwrap();
 
       let device = xot.add_name("device");
       let attr = xot.add_name("attr");
@@ -215,21 +216,30 @@ impl<D: UdevDevice> UdevTree<D> {
       let name = xot.add_name("name");
       let value = xot.add_name("value");
 
+      let sysname = CreateName::namespaced(xot, "SYSNAME", &key_ns).name_id();
+      let syspath = CreateName::namespaced(xot, "SYSPATH", &key_ns).name_id();
+      let subsystem = CreateName::namespaced(xot, "SUBSYSTEM", &key_ns).name_id();
+      let driver = CreateName::namespaced(xot, "DRIVER", &key_ns).name_id();
+
       let mut static_context_builder = StaticContextBuilder::default();
+      static_context_builder.add_namespace(META_NAMESPACE.0, META_NAMESPACE.1);
       static_context_builder.add_namespace(KEY_NAMESPACE.0, KEY_NAMESPACE.1);
 
       Self {
          docs,
-         _document_node: document_node,
          document_element,
          node_map: HashMap::new(),
          names: XMLNames {
-            ns,
             device,
             attr,
             attr_path,
             name,
             value,
+            sysname,
+            syspath,
+            subsystem,
+            driver,
+            input,
          },
          static_context_builder,
          _phantom: PhantomData,
@@ -275,30 +285,27 @@ impl<D: UdevDevice> UdevTree<D> {
    }
 
    fn set_properties(&mut self, node: Node, dev: &D) {
-      let keys = [("SYSPATH", dev.syspath()), ("SYSNAME", dev.sysname())]
-         .into_iter()
-         .chain(dev.subsystem().map(|subsystem| ("SUBSYSTEM", subsystem)))
-         .chain(dev.driver().map(|driver| ("DRIVER", driver)));
-
-      let xot = self.docs.xot_mut();
-      let mut attrs = xot.attributes_mut(node);
       // removing all old properties
-      attrs.clear();
+      self.docs.xot_mut().attributes_mut(node).clear();
 
-      for (name, value) in keys {
-         // .xot_mut() and .attributes_mut() are both necessary and both cheap
+      let subsystem = dev.subsystem();
+      let keys = [(self.names.syspath, dev.syspath()), (self.names.sysname, dev.sysname())]
+         .into_iter()
+         .chain(subsystem.map(|s| (self.names.subsystem, s)))
+         .chain(dev.driver().map(|s| (self.names.driver, s)))
+         .chain(subsystem.is_some_and(|s| s == "input").then(|| (self.names.input, "")));
+
+      for (id, value) in keys {
+         // .xot_mut() and .attributes_mut() are both necessary and cheap
          let xot = self.docs.xot_mut();
-         let id = CreateName::namespaced(xot, &name, &self.names.ns);
-         let mut attrs = xot.attributes_mut(node);
-         attrs.insert(id, value.to_owned());
+         xot.attributes_mut(node).insert(id, value.to_owned());
       }
 
       dev.for_each_property(|name, value| {
-         // .xot_mut() and .attributes_mut() are both necessary and both cheap
+         // .xot_mut() and .attributes_mut() are both necessary and cheap
          let xot = self.docs.xot_mut();
          let id = xot.add_name(name);
-         let mut attrs = xot.attributes_mut(node);
-         attrs.insert(id, value.to_owned());
+         xot.attributes_mut(node).insert(id, value.to_owned());
       });
    }
 
@@ -309,43 +316,43 @@ impl<D: UdevDevice> UdevTree<D> {
 
       while let Some(child_node) = cur_child {
          let next = xot.next_sibling(child_node);
-         if xot.element(child_node).is_some_and(|element| {
-            let name = element.name();
-            name == self.names.attr || name == self.names.attr_path
-         }) {
-            assert_matches!(xot.remove(child_node), Ok(_));
+         if xot
+            .element(child_node)
+            .is_some_and(|e| e.name() == self.names.attr || e.name() == self.names.attr_path)
+         {
+            xot.remove(child_node).unwrap()
          }
          cur_child = next;
       }
 
-      let attributes = dev.attributes();
       let mut prefixes = HashMap::new();
       prefixes.insert(Path::new("").to_owned(), node);
-      let mut buffer = vec![];
-      for (name, value) in attributes {
+      for (name, value) in dev.attributes() {
          // attr as tree
          let path = Path::new(&name);
-         let mut last_node = self._document_node;
-         // TODO: convert this to .ancestors().rev() when DoubleEndedIterators are merged
-         for &prefix in path.ancestors().collect_into(&mut buffer).iter().rev() {
-            if !prefixes.contains_key(prefix) {
-               let element = prefix.file_name().unwrap();
-               let parent = *prefixes.get(prefix.parent().unwrap()).unwrap();
-               last_node = xot.new_element(self.names.attr);
-               prefixes.insert(prefix.to_owned(), last_node);
+         let mut ancestors = path.ancestors();
+         let mut last_node = None;
+         let mut found = false;
 
-               xot.attributes_mut(last_node)
-                  .insert(self.names.name, element.to_string_lossy().to_string());
-               xot.append(parent, last_node).unwrap();
+         while !found && let Some(prefix) = ancestors.next() {
+            let (node, mut attrs) = if let Some(&node) = prefixes.get(prefix) {
+               found = true;
+               (node, xot.attributes_mut(node))
+            } else {
+               let element = prefix.file_name().unwrap();
+               let node = xot.new_element(self.names.attr);
+               let mut attrs = xot.attributes_mut(node);
+               attrs.insert(self.names.name, element.to_str().unwrap().to_owned());
+               prefixes.insert(prefix.to_owned(), node);
+               (node, attrs)
+            };
+
+            if let Some(last) = last_node {
+               xot.append(node, last).unwrap();
+            } else {
+               attrs.insert(self.names.value, value.clone());
             }
-         }
-         // There must be at least one node
-         assert_ne!(last_node, self._document_node);
-         xot.attributes_mut(last_node).insert(self.names.value, value.clone());
-         // the buffer is cleared and we can ignore the typechecker
-         unsafe {
-            buffer.clear();
-            buffer = transmute(buffer);
+            last_node = Some(node);
          }
 
          // attr by path
@@ -358,17 +365,21 @@ impl<D: UdevDevice> UdevTree<D> {
    }
 
    pub fn detach(&mut self, syspath: &str) {
-      if let Some(node) = self.node_map.remove(syspath) {
+      if let Some(mut node) = self.node_map.remove(syspath) {
          let xot = self.docs.xot_mut();
-         // Checking if node has a parent, meaning it's still attached to the tree
-         if xot.parent(node).is_some() {
-            // This removes the node and its descendants from the XML tree
-            xot.remove(node).unwrap();
+         while let Some(parent) = {
+            xot.parent(node).filter(|parent| {
+               xot.attributes(*parent).contains_key(self.names.input) && !xot.children(*parent).one_or_less_items()
+            })
+         } {
+            node = parent;
          }
+
+         xot.remove(node).unwrap();
       }
    }
 
-   pub fn compile_boolean_query(&mut self, query_str: &str) -> XeeResult<OneQuery<bool, impl Convert<bool> + use<D>>> {
+   pub fn compile_boolean_query(&self, query_str: &str) -> XeeResult<OneQuery<bool, impl Convert<bool> + use<D>>> {
       let queries = Queries::new(self.static_context_builder.clone());
       queries.one(query_str, move |_, item| Ok(item.try_into_value::<bool>()?))
    }
@@ -387,12 +398,11 @@ impl<D: UdevDevice> UdevTree<D> {
    }
 
    pub fn match_query(&mut self, query: &ManyQuery<String, impl Convert<String>>) -> XeeResult<Vec<String>> {
-      query.execute(&mut self.docs, self._document_node)
+      query.execute(&mut self.docs, self.document_element)
    }
 
-   pub fn compile_query(&mut self, query_str: &str) -> XeeResult<ManyQuery<String, impl Convert<String> + use<D>>> {
-      let xot = self.docs.xot_mut();
-      let name = CreateName::namespaced(xot, "SYSPATH", &self.names.ns).name_id();
+   pub fn compile_query(&self, query_str: &str) -> XeeResult<ManyQuery<String, impl Convert<String> + use<D>>> {
+      let name = self.names.syspath;
       Queries::new(self.static_context_builder.clone()).many(
          query_str,
          move |documents: &mut Documents, item: &Item| {
@@ -405,7 +415,7 @@ impl<D: UdevDevice> UdevTree<D> {
 
    pub fn compile_and_match(&mut self, query_str: &str) -> XeeResult<Vec<String>> {
       let query = self.compile_query(query_str)?;
-      query.execute(&mut self.docs, self._document_node)
+      query.execute(&mut self.docs, self.document_element)
    }
 
    pub fn serialize(&self) -> Result<String, Error> {
@@ -413,6 +423,25 @@ impl<D: UdevDevice> UdevTree<D> {
 
       let mut config = Parameters::default();
       config.indentation = Some(Indentation::default());
-      xot.serialize_xml_string(config, self._document_node)
+      xot.serialize_xml_string(config, self.document_element)
+   }
+}
+
+trait OneItemed: Iterator {
+   // fn exactly_one_item(self) -> bool;
+   fn one_or_less_items(self) -> bool;
+}
+
+impl<T> OneItemed for T
+where
+   T: Iterator,
+{
+   // fn exactly_one_item(mut self) -> bool {
+   //    self.next().is_some() && self.next().is_none()
+   // }
+
+   fn one_or_less_items(mut self) -> bool {
+      self.next();
+      self.next().is_none()
    }
 }

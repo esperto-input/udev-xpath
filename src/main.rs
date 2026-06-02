@@ -1,5 +1,3 @@
-#![feature(iter_collect_into)]
-
 use crate::udev_tree::UdevTree;
 use std::fs;
 use udev::{Device, Enumerator};

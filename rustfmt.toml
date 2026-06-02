@@ -1,2 +1,5 @@
 max_width = 120
 tab_spaces = 3
+format_macro_matchers = true
+format_macro_bodies = true
+overflow_delimited_expr = true
