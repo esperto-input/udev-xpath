@@ -12,3 +12,10 @@ xot = "0.31.2"
 udev = "0.9.3"
 tap = "1.0.1"
 base64 = "0.22.1"
+tokio = { version = "1.51.0", features = ["macros", "rt", "signal", "sync", "rt-multi-thread", "time"] }
+tokio-udev = "0.10.0"
+futures = "0.3.32"
+indexmap = "2.14.0"
+
+[[example]]
+name = "example"
