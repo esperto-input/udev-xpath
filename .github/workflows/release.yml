@@ -22,9 +22,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build package
-        run: cargo build --release --verbose
-
       - name: Publish
         run: cargo publish
         env:
@@ -46,7 +43,6 @@ jobs:
         uses: ncipollo/release-action@v1
         with:
           artifactErrorsFailBuild: true
-          # artifacts: target/release/esperto-wiimote
           commit: ${{ github.sha }}
           immutableCreate: true
           omitBody: true
