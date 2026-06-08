@@ -14,4 +14,4 @@ env:
 
 jobs:
   shared-ci:
-    uses: esperto-input/.github/.github/workflows/release.yml@main
+    uses: esperto-input/.github/.github/workflows/release.yml@master
