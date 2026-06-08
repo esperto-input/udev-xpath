@@ -1,10 +1,12 @@
 [package]
 name = "udev-xpath"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Match udev devices with xpath queries"
 readme = "README.md"
 license = "MIT"
+homepage = "https://github.com/esperto-input/udev-xpath"
+repository = "https://github.com/esperto-input/udev-xpath.git"
 
 [dependencies]
 xee-xpath = "0.1.5"
