@@ -16,12 +16,12 @@ pub trait UdevDevice: Sized {
 
    fn driver(&self) -> Option<&str>;
 
+   #[allow(unused)]
    fn attributes(&self) -> impl Iterator<Item = (String, String)>;
 
    #[allow(unused)]
    fn properties(&self) -> impl Iterator<Item = (String, String)>;
 
-   #[allow(unused)]
    fn for_each_attribute(&self, callback: impl FnMut(&str, &str));
 
    fn for_each_property(&self, callback: impl FnMut(&str, &str));
